@@ -1,0 +1,92 @@
+// bot.js (CommonJS - Telegraf)
+require('dotenv').config();
+const { Telegraf, Scenes, session, Markup } = require('telegraf');
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
+
+if (!BOT_TOKEN) {
+  console.error('❌ BOT_TOKEN missing in .env');
+  process.exit(1);
+}
+if (!ADMIN_ID) {
+  console.error('❌ ADMIN_ID missing or invalid in .env');
+  process.exit(1);
+}
+
+// Create a simple wizard (multi-step form)
+const { WizardScene, Stage } = Scenes;
+
+const receptionWizard = new WizardScene('reception-wizard',
+  (ctx) => {
+    ctx.wizard.state.data = {};
+    ctx.reply('👋 Welcome to Nina Medium Clinic! Please enter your *Full Name*:',
+      { parse_mode: 'Markdown' });
+    return ctx.wizard.next();
+  },
+  (ctx) => {
+    ctx.wizard.state.data.fullName = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
+    ctx.reply('📞 Please enter your *Email* or *Phone number*:', { parse_mode: 'Markdown' });
+    return ctx.wizard.next();
+  },
+  (ctx) => {
+    ctx.wizard.state.data.contact = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
+    return ctx.reply('🩺 Select the service you want:', Markup.keyboard([['Consultation','Check-up'], ['Emergency','Other']]).oneTime().resize())
+      .then(() => ctx.wizard.next());
+  },
+  (ctx) => {
+    ctx.wizard.state.data.service = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
+    ctx.reply('📅 Please enter preferred *date & time* (e.g., October 25, 2 PM):', { parse_mode: 'Markdown' });
+    return ctx.wizard.next();
+  },
+  (ctx) => {
+    ctx.wizard.state.data.datetime = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
+    ctx.reply('💬 Finally, type your *message or inquiry*:', { parse_mode: 'Markdown' });
+    return ctx.wizard.next();
+  },
+  async (ctx) => {
+    ctx.wizard.state.data.message = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
+
+    const d = ctx.wizard.state.data;
+    const summary = `📩 *New Inquiry Received!*\n\n` +
+      `👤 *Name:* ${d.fullName}\n` +
+      `📞 *Contact:* ${d.contact}\n` +
+      `🩺 *Service:* ${d.service}\n` +
+      `📅 *Date/Time:* ${d.datetime}\n` +
+      `💬 *Message:* ${d.message}\n\n` +
+      `From: ${ctx.from.first_name || ''} (@${ctx.from.username || 'N/A'})`;
+
+    // send summary to admin only
+    try {
+      await ctx.telegram.sendMessage(ADMIN_ID, summary, { parse_mode: 'Markdown' });
+      await ctx.reply('✅ Thank you! Your request has been sent to Nina Medium Clinic. We will contact you soon.');
+    } catch (err) {
+      console.error('Failed to send to admin:', err && err.message ? err.message : err);
+      await ctx.reply('⚠️ Sorry — there was an error sending your request. Please try again later.');
+    }
+
+    return ctx.scene.leave();
+  }
+);
+
+const stage = new Stage([receptionWizard]);
+const bot = new Telegraf(BOT_TOKEN);
+
+bot.use(session());
+bot.use(stage.middleware());
+
+bot.start((ctx) => ctx.scene.enter('reception-wizard'));
+
+bot.on('text', (ctx) => {
+  // guide users to /start
+  ctx.reply('Send /start to begin the appointment request form.');
+});
+
+bot.catch((err) => {
+  console.error('Bot error:', err && err.message ? err.message : err);
+});
+
+console.log('🤖 Bot (Telegraf) is starting...');
+bot.launch()
+  .then(() => console.log('✅ Bot launched'))
+  .catch((err) => console.error('Launch error:', err && err.message ? err.message : err));
