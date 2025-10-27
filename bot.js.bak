@@ -1,9 +1,17 @@
-// bot.js (CommonJS - Telegraf)
+cat > bot.js <<'JS'
+/*
+  bot.js - Nina Medium Clinic (CommonJS)
+  - Requires: telegraf, dotenv
+  - Reads: BOT_TOKEN, ADMIN_ID from .env
+  - Behavior: start menu with image + service descriptions (Amharic+English),
+              booking wizard, sends summary to user and ADMIN_ID, Start Again button.
+*/
+
 require('dotenv').config();
-const { Telegraf, Scenes, session, Markup } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
+const ADMIN_ID = process.env.ADMIN_ID ? parseInt(process.env.ADMIN_ID, 10) : null;
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN missing in .env');
@@ -11,82 +19,201 @@ if (!BOT_TOKEN) {
 }
 if (!ADMIN_ID) {
   console.error('❌ ADMIN_ID missing or invalid in .env');
-  process.exit(1);
+  // we continue but admin will not receive messages; comment out exit if you want to test locally without admin
+  // process.exit(1);
 }
 
-// Create a simple wizard (multi-step form)
-const { WizardScene, Stage } = Scenes;
-
-const receptionWizard = new WizardScene('reception-wizard',
-  (ctx) => {
-    ctx.wizard.state.data = {};
-    ctx.reply('👋 Welcome to Nina Medium Clinic! Please enter your *Full Name*:',
-      { parse_mode: 'Markdown' });
-    return ctx.wizard.next();
-  },
-  (ctx) => {
-    ctx.wizard.state.data.fullName = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
-    ctx.reply('📞 Please enter your *Email* or *Phone number*:', { parse_mode: 'Markdown' });
-    return ctx.wizard.next();
-  },
-  (ctx) => {
-    ctx.wizard.state.data.contact = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
-    return ctx.reply('🩺 Select the service you want:', Markup.keyboard([['Consultation','Check-up'], ['Emergency','Other']]).oneTime().resize())
-      .then(() => ctx.wizard.next());
-  },
-  (ctx) => {
-    ctx.wizard.state.data.service = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
-    ctx.reply('📅 Please enter preferred *date & time* (e.g., October 25, 2 PM):', { parse_mode: 'Markdown' });
-    return ctx.wizard.next();
-  },
-  (ctx) => {
-    ctx.wizard.state.data.datetime = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
-    ctx.reply('💬 Finally, type your *message or inquiry*:', { parse_mode: 'Markdown' });
-    return ctx.wizard.next();
-  },
-  async (ctx) => {
-    ctx.wizard.state.data.message = ctx.message && ctx.message.text ? ctx.message.text.trim() : '';
-
-    const d = ctx.wizard.state.data;
-    const summary = `📩 *New Inquiry Received!*\n\n` +
-      `👤 *Name:* ${d.fullName}\n` +
-      `📞 *Contact:* ${d.contact}\n` +
-      `🩺 *Service:* ${d.service}\n` +
-      `📅 *Date/Time:* ${d.datetime}\n` +
-      `💬 *Message:* ${d.message}\n\n` +
-      `From: ${ctx.from.first_name || ''} (@${ctx.from.username || 'N/A'})`;
-
-    // send summary to admin only
-    try {
-      await ctx.telegram.sendMessage(ADMIN_ID, summary, { parse_mode: 'Markdown' });
-      await ctx.reply('✅ Thank you! Your request has been sent to Nina Medium Clinic. We will contact you soon.');
-    } catch (err) {
-      console.error('Failed to send to admin:', err && err.message ? err.message : err);
-      await ctx.reply('⚠️ Sorry — there was an error sending your request. Please try again later.');
-    }
-
-    return ctx.scene.leave();
-  }
-);
-
-const stage = new Stage([receptionWizard]);
 const bot = new Telegraf(BOT_TOKEN);
 
-bot.use(session());
-bot.use(stage.middleware());
+// In-memory sessions map: chatId -> session object
+const sessions = new Map();
 
-bot.start((ctx) => ctx.scene.enter('reception-wizard'));
+// Clinic image (change URL if you want)
+const WELCOME_IMAGE = 'https://i.imgur.com/vu4bO4H.jpeg';
 
-bot.on('text', (ctx) => {
-  // guide users to /start
-  ctx.reply('Send /start to begin the appointment request form.');
+// Build the welcome caption (Amharic + English)
+function welcomeText() {
+  return (
+`👋 እንኳን ወደ Nina Medium Clinic በደህና መጡ!
+Welcome to *Nina Medium Clinic*.
+
+🩺 እኛ የምናቀርባቸው አገልግሎቶች | Our services:
+• 💉 የህክምና ምርመራ / Check-up
+  - Regular medical examination, blood pressure, tests.
+• ❤️ አጠቃላይ ምርመራ / General Diagnosis
+  - Full assessment and treatment advice.
+
+📅 እባክዎ ለቦታ ማስያዣ ቀጥሉ።
+To book an appointment press the button below.`
+  );
+}
+
+// Helper: format summary for admin (Markdown)
+function formatAdminSummary(session, from) {
+  return (
+`📩 *New Booking Received*
+
+👤 *Full Name:* ${session.fullName || 'N/A'}
+📞 *Contact:* ${session.contact || 'N/A'}
+🩺 *Service:* ${session.service || 'N/A'}
+📅 *Preferred Date/Time:* ${session.datetime || 'N/A'}
+💬 *Message:* ${session.message || 'N/A'}
+
+• From Telegram: ${from.first_name || ''} ${from.last_name || ''} (@${from.username || 'N/A'})
+`
+  );
+}
+
+// /start - show image + caption + Start/Cancel buttons
+bot.start(async (ctx) => {
+  sessions.delete(ctx.chat.id);
+
+  try {
+    await ctx.replyWithPhoto(WELCOME_IMAGE, {
+      caption: welcomeText(),
+      parse_mode: 'Markdown',
+    });
+  } catch (e) {
+    // fallback: if image fails, just send text
+    await ctx.reply(welcomeText());
+  }
+
+  await ctx.reply(
+    'Please choose an option / እባክዎ አንዱን ይምረጡ:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('ለመጀመር / Start', 'start_booking')],
+      [Markup.button.callback('ተወው / Cancel', 'cancel_booking')]
+    ])
+  );
 });
 
-bot.catch((err) => {
-  console.error('Bot error:', err && err.message ? err.message : err);
+// Cancel handler
+bot.action('cancel_booking', async (ctx) => {
+  sessions.delete(ctx.chat.id);
+  try { await ctx.editMessageText('❌ ሂደቱ ተሰርዟል። Booking cancelled.'); } catch(e) {}
+  await ctx.reply('Booking canceled. Send /start to begin again.');
 });
 
-console.log('🤖 Bot (Telegraf) is starting...');
+// Start booking - initialize session and ask for full name
+bot.action('start_booking', async (ctx) => {
+  sessions.set(ctx.chat.id, { step: 'name' });
+  try { await ctx.editMessageText('👤 እባክዎ ሙሉ ስምዎን ያስገቡ / Please enter your Full Name:'); } catch(e) {}
+});
+
+// Service buttons
+bot.action('service_checkup', async (ctx) => {
+  const s = sessions.get(ctx.chat.id);
+  if (!s) return ctx.reply('Session expired. Send /start to begin.');
+  s.service = '💉 የህክምና ምርመራ / Check-up';
+  s.step = 'datetime';
+  try { await ctx.editMessageText('📅 እባክዎ የቀን እና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., 2025-10-27 14:00):'); } catch(e) {}
+});
+
+bot.action('service_diagnosis', async (ctx) => {
+  const s = sessions.get(ctx.chat.id);
+  if (!s) return ctx.reply('Session expired. Send /start to begin.');
+  s.service = '❤️ አጠቃላይ ምርመራ / General Diagnosis';
+  s.step = 'datetime';
+  try { await ctx.editMessageText('📅 እባክዎ የቀን እና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., 2025-10-27 14:00):'); } catch(e) {}
+});
+
+// Text handler for wizard steps
+bot.on('text', async (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = (ctx.message && ctx.message.text) ? ctx.message.text.trim() : '';
+  const session = sessions.get(chatId);
+
+  if (!session) {
+    return ctx.reply('Send /start to begin the booking process. / እባክዎ /start ይጫኑ።');
+  }
+
+  try {
+    switch (session.step) {
+      case 'name':
+        session.fullName = text;
+        session.step = 'contact';
+        await ctx.reply('📞 እባክዎ ስልክ ቁጥርዎን ወይም ኢሜይልዎን ያስገቡ / Please enter your Contact (phone or email):');
+        break;
+
+      case 'contact':
+        session.contact = text;
+        session.step = 'service';
+        await ctx.reply(
+          '🩺 የሚፈልጉትን አገልግሎት ይምረጡ / Please choose the service:',
+          Markup.inlineKeyboard([
+            [Markup.button.callback('💉 የህክምና ምርመራ / Check-up', 'service_checkup')],
+            [Markup.button.callback('❤️ አጠቃላይ ምርመራ / General Diagnosis', 'service_diagnosis')]
+          ])
+        );
+        break;
+
+      case 'datetime':
+        session.datetime = text;
+        session.step = 'message';
+        await ctx.reply('💬 ማንሳት / Any additional message or inquiry? (type "none" if none):');
+        break;
+
+      case 'message':
+        session.message = text;
+
+        // Build user summary (plain)
+        const userSummary =
+`📩 Thank you — here is your booking summary:
+
+👤 Full Name: ${session.fullName}
+📞 Contact: ${session.contact}
+🩺 Service: ${session.service}
+📅 Preferred Date/Time: ${session.datetime}
+💬 Message: ${session.message}
+
+We will contact you soon.
+`;
+
+        // Build admin summary (Markdown friendly)
+        const adminSummary = formatAdminSummary(session, ctx.from);
+
+        // Send summary to user
+        await ctx.reply(userSummary, Markup.inlineKeyboard([
+          [Markup.button.callback('🔁 እንደገና ጀምር / Start Again', 'start_booking')]
+        ]));
+
+        // Send to admin (if ADMIN_ID set)
+        if (ADMIN_ID) {
+          try {
+            await bot.telegram.sendMessage(ADMIN_ID, adminSummary, { parse_mode: 'Markdown' });
+            console.log('✅ Sent booking to admin', ADMIN_ID);
+          } catch (err) {
+            console.error('❌ Failed to send booking to admin:', err && err.message ? err.message : err);
+            await ctx.reply('⚠️ Warning: failed to notify admin. Please try again later.');
+          }
+        } else {
+          console.warn('No ADMIN_ID set, admin will not receive messages.');
+        }
+
+        sessions.delete(chatId);
+        break;
+
+      default:
+        await ctx.reply('Unexpected step. Send /start to begin again. / እባክዎ /start ይጫኑ።');
+    }
+  } catch (err) {
+    console.error('Handler error:', err && err.stack ? err.stack : err);
+    sessions.delete(chatId);
+    await ctx.reply('⚠️ An error occurred. Please send /start and try again. / እባክዎ /start ይጫኑ።');
+  }
+});
+
+// Global error logging
+bot.catch((err, ctx) => {
+  console.error('Bot error', err);
+});
+
+// Launch bot
 bot.launch()
-  .then(() => console.log('✅ Bot launched'))
-  .catch((err) => console.error('Launch error:', err && err.message ? err.message : err));
+  .then(()=> console.log('🤖 Bot is running successfully...'))
+  .catch(err => console.error('Launch error', err));
+
+// graceful shutdown
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
+JS
