@@ -1,19 +1,21 @@
 {
-  "name": "nina_clinic_bot",
+  "name": "nina-clinic-bot",
   "version": "1.0.0",
-  "description": "Nina Medium Clinic Telegram reception bot",
+  "description": "Telegram bot for Nina Clinic appointments.",
   "main": "bot.js",
   "type": "module",
   "scripts": {
     "start": "node bot.js"
   },
-  "keywords": [],
+  "keywords": [
+    "telegram",
+    "bot",
+    "telegraf"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "dotenv": "^17.2.3",
-    "node-telegram-bot-api": "^0.66.0",
-    "telegraf": "^4.16.3",
-    "telegraf-session-local": "^2.1.1"
+    "telegraf": "^4.16.1",
+    "dotenv": "^16.4.5"
   }
 }
