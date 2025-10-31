@@ -68,7 +68,7 @@ function escapeMarkdownV2(text) {
 
 // Welcome text (Merged from both versions)
 function welcomeText() {
-  return `👋 እንኳን ወደ *Nina Medium Clinic* በደህNA መጡ!
+  return `👋 እንኳን ወደ *Nina Medium Clinic22* በደህNA መጡ!
 Welcome to *Nina Clinic* 💖
 
 🩺 እኛ የምናስገባቸው አገልግሎቶች | Our Services:
