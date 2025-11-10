@@ -7,9 +7,17 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+<<<<<<< HEAD
 // CORRECT IMPORTS FOR SERVERLESS SESSION
 import { Telegraf, Markup } from 'telegraf';
 import { session } from '@telegraf/session'; 
+=======
+// NOTICE: 'session' is NOT here, it's imported from the separate package
+import { Telegraf, Markup } from 'telegraf'; 
+import { session } from '@telegraf/session'; // <-- This is the NEW/CORRECT import
+
+// ... rest of the code ...
+>>>>>>> 844ca8268b8a51543cee803408fdfc08eb217b6f
 
 // Configure dotenv
 dotenv.config();
@@ -172,7 +180,11 @@ async function handleServiceSelection(ctx, serviceName) {
     await ctx.editMessageText(`📅 እባክዎ የቀንና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., ${year}-10-27 14:00):`);
   } catch (e) {
     console.warn('Edit message failed (service selection):', e.message);
+<<<<<<< HEAD
     await ctx.reply(`📅 እባክዎ የቀንና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., ${year}-10-27 14:00):`);
+=======
+    await ctx.reply(`📅 እባкዎ የቀንና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., ${year}-10-27 14:00):`);
+>>>>>>> 844ca8268b8a51543cee803408fdfc08eb217b6f
   }
 }
 
