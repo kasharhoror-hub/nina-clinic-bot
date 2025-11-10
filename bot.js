@@ -310,7 +310,7 @@ bot.action('start_booking', async (ctx) => {
 
   try {
 
-    await ctx.editMessageText('👤 ሙሉ ስምዎን ያስገቡ።\nPlease enter your Full Name:');
+    await ctx.editMessageText('👤 ሙሉ ስምዎን ያስገቡ።Please enter your Full Name:');
 
   } catch (e) {
 
@@ -318,7 +318,7 @@ bot.action('start_booking', async (ctx) => {
 
     // Fallback if edit fails
 
-    await ctx.reply('👤 ሙሉ ስምዎን ያስገቡ።\nPlease enter your Full Name:');
+    await ctx.reply('👤 ሙሉ ስምዎን ያስገቡ።Please enter your Full Name:');
 
   }
 
