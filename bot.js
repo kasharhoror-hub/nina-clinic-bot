@@ -1,6 +1,17 @@
 /*
   bot.js - Nina Medium Clinic (ES Module + Telegraf)
-  *** REFACTORED FOR VERCEL WEBHOOK ***
+  - Uses local image nina.jpg for welcome
+  - Full Amharic + English texts with map link
+  - Booking wizard with 5 services:
+    1. Full Name
+    2. Contact
+    3. Service (5 buttons)
+    4. Date/Time
+    5. Message
+  - Sends summary to user AND to admin (from ADMIN_ID in .env)
+  - Admin notification warning removed from user view.
+  
+  *** REFACTORED FOR VERCEL WEBHOOK WITH SESSION FIX ***
 */
 
 import dotenv from 'dotenv';
@@ -8,6 +19,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Telegraf, Markup } from 'telegraf';
+import LocalSession from 'telegraf-session-local'; // <-- NEW IMPORT
 
 // Configure dotenv
 dotenv.config();
@@ -21,13 +33,11 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID ? parseInt(process.env.ADMIN_ID, 10) : null;
 
 if (!BOT_TOKEN) {
-  console.error('❌ BOT_TOKEN missing in .env. Please get it from BotFather.');
-  // In a serverless function, we should not exit(1) but simply fail gracefully
-  // However, Vercel will prevent deployment if environment variables are missing.
+  console.error('❌ BOT_TOKEN missing. Deployment will likely fail.');
 }
 
 if (!ADMIN_ID) {
-  console.warn('⚠️ ADMIN_ID missing in Vercel Environment Variables — admin will not receive booking messages.');
+  console.warn('⚠️ ADMIN_ID missing — admin will not receive booking messages.');
 } else {
   console.log(`ℹ️ Admin ID is set to: ${ADMIN_ID}`);
 }
@@ -35,20 +45,24 @@ if (!ADMIN_ID) {
 // --- INITIALIZATION ---
 const bot = new Telegraf(BOT_TOKEN);
 
-// In-memory sessions map: chatId -> session object
-const sessions = new Map();
+// Configure Local Session: Uses Vercel's temporary directory for session storage
+// This replaces the volatile in-memory 'sessions = new Map()'
+const session = new LocalSession({
+  database: '/tmp/session.json' // Vercel's writable temporary directory
+});
+
+// Apply session middleware
+bot.use(session.middleware());
 
 // Local welcome image path (must exist in the same folder)
 const LOCAL_WELCOME_IMAGE = path.join(__dirname, 'nina.jpg');
 
-// --- HELPER FUNCTIONS ---
 
 /**
  * Escapes Telegram MarkdownV2 special characters.
  */
 function escapeMarkdownV2(text) {
   if (!text) return '';
-  // List of special characters for MarkdownV2
   const chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
   return text.replace(new RegExp(`[${chars.map(c => '\\' + c).join('')}]`, 'g'), '\\$&');
 }
@@ -73,6 +87,7 @@ To book an an appointment, press the button below.`;
 
 // Format admin summary (Markdown)
 function formatAdminSummary(session, from) {
+  // Access properties from ctx.session (now persistent)
   const fullName = escapeMarkdownV2(session.fullName || 'N/A');
   const contact = escapeMarkdownV2(session.contact || 'N/A');
   const service = escapeMarkdownV2(session.service || 'N/A');
@@ -93,12 +108,12 @@ function formatAdminSummary(session, from) {
 • From Telegram: ${firstName} ${lastName} (@${username})`;
 }
 
-// --- BOT HANDLERS (Same as original) ---
-
 // /start - show local image + caption + Start/Cancel buttons
 bot.start(async (ctx) => {
-  sessions.delete(ctx.chat.id);
+  // Clear existing session properties for this user
+  ctx.session = {};
 
+  // Send local photo if available
   try {
     if (fs.existsSync(LOCAL_WELCOME_IMAGE)) {
       await ctx.replyWithPhoto({ source: fs.createReadStream(LOCAL_WELCOME_IMAGE) }, {
@@ -110,10 +125,12 @@ bot.start(async (ctx) => {
       await ctx.reply(welcomeText(), { parse_mode: 'Markdown' });
     }
   } catch (err) {
+    // Fallback if sending photo fails
     console.error('Error sending welcome photo:', err.message);
     await ctx.reply(welcomeText(), { parse_mode: 'Markdown' });
   }
 
+  // Show Start / Cancel buttons
   await ctx.reply(
     'እባክዎ አንዱን ይምረጡ / Please choose an option:',
     Markup.inlineKeyboard([
@@ -125,7 +142,8 @@ bot.start(async (ctx) => {
 
 // Cancel handler
 bot.action('cancel_booking', async (ctx) => {
-  sessions.delete(ctx.chat.id);
+  // Clear the session entirely
+  ctx.session = {}; 
   try {
     await ctx.editMessageText('❌ ሂደቱ ተሰርዟል። Booking cancelled.');
   } catch (e) {
@@ -136,7 +154,8 @@ bot.action('cancel_booking', async (ctx) => {
 
 // Start booking - ask for Full Name
 bot.action('start_booking', async (ctx) => {
-  sessions.set(ctx.chat.id, { step: 'name' });
+  // Initialize session data
+  ctx.session = { step: 'name' };
   try {
     await ctx.editMessageText('👤 ሙሉ ስምዎን ያስገቡ።\nPlease enter your Full Name:');
   } catch (e) {
@@ -145,9 +164,14 @@ bot.action('start_booking', async (ctx) => {
   }
 });
 
+// --- Service Button Handlers ---
+
 // Helper function to handle ALL service selections
 async function handleServiceSelection(ctx, serviceName) {
-  const s = sessions.get(ctx.chat.id);
+  // Access session via ctx.session
+  const s = ctx.session;
+  
+  // Check if we are in the right step
   if (!s || s.step !== 'service') {
     return ctx.reply('Session expired or in wrong step. Send /start to begin.');
   }
@@ -160,7 +184,7 @@ async function handleServiceSelection(ctx, serviceName) {
     await ctx.editMessageText(`📅 እባክዎ የቀንና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., ${year}-10-27 14:00):`);
   } catch (e) {
     console.warn('Edit message failed (service selection):', e.message);
-    await ctx.reply(`📅 እባкዎ የቀንና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., ${year}-10-27 14:00):`);
+    await ctx.reply(`📅 እባክዎ የቀንና ሰዓት ያስገቡ / Enter preferred Date & Time (e.g., ${year}-10-27 14:00):`);
   }
 }
 
@@ -174,11 +198,12 @@ bot.action('service_lab', (ctx) => handleServiceSelection(ctx, 'የምርመራ 
 
 // Text handler for wizard steps
 bot.on('text', async (ctx) => {
-  const chatId = ctx.chat.id;
+  // Access session via ctx.session
+  const session = ctx.session;
+  
   const text = (ctx.message && ctx.message.text) ? ctx.message.text.trim() : '';
-  const session = sessions.get(chatId);
 
-  if (!session) {
+  if (!session || !session.step) {
     return ctx.reply('Send /start to begin the booking process. / እባክዎ /start ይጫኑ።');
   }
 
@@ -252,16 +277,19 @@ We will contact you soon.`;
           console.warn('No ADMIN_ID set — booking was NOT sent to admin.');
         }
 
-        sessions.delete(chatId);
+        // Clear session by resetting it to an empty object
+        ctx.session = {}; 
         break;
 
       default:
         await ctx.reply('Unexpected step. Send /start to begin again. / እባክዎ /start ይጫኑ።');
-        sessions.delete(chatId);
+        // Clear session on error
+        ctx.session = {}; 
     }
   } catch (err) {
     console.error('Handler error:', err.stack || err);
-    sessions.delete(chatId);
+    // Clear session on major error
+    ctx.session = {}; 
     await ctx.reply('⚠️ An error occurred. Please send /start and try again. / እባክዎ /start ይጫኑ።');
   }
 });
@@ -274,15 +302,14 @@ bot.catch((err, ctx) => {
 // --- VERCEL WEBHOOK INTEGRATION ---
 
 /**
- * The main handler function for Vercel.
- * This is the entry point that Vercel executes upon receiving an HTTP request (webhook).
- */
+ * The main handler function for Vercel.
+ */
 export default async (req, res) => {
   try {
     // Telegram sends a POST request with the update data in the body
     if (req.method === 'POST') {
       await bot.handleUpdate(req.body, res);
-      // Important: Send an immediate 200 OK response to Telegram
+      // Send an immediate 200 OK response to Telegram
       res.statusCode = 200;
       res.end('ok');
     } else if (req.method === 'GET') {
@@ -299,10 +326,4 @@ export default async (req, res) => {
     res.end('Internal Server Error.');
   }
 };
-
 // --- END VERCEL WEBHOOK INTEGRATION ---
-
-// Graceful stop is no longer needed in serverless functions,
-// as the function stops automatically after the request.
-// process.once('SIGINT', () => bot.stop('SIGINT'));
-// process.once('SIGTERM', () => bot.stop('SIGTERM'));
