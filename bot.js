@@ -7,9 +7,11 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-// IMPORT 'session' from the correct package
-import { Telegraf, Markup } from 'telegraf';
-import { session } from '@telegraf/session'; 
+// NOTICE: 'session' is NOT here, it's imported from the separate package
+import { Telegraf, Markup } from 'telegraf'; 
+import { session } from '@telegraf/session'; // <-- This is the NEW/CORRECT import
+
+// ... rest of the code ...
 
 // Configure dotenv
 dotenv.config();
