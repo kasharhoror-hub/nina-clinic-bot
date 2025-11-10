@@ -1,13 +1,25 @@
 /*
   bot.js - Nina Medium Clinic (ES Module + Telegraf)
-  *** FINAL VERCEL FIX: Using built-in Telegraf session middleware ***
+  - Uses local image nina.jpg for welcome
+  - Full Amharic + English texts with map link
+  - Booking wizard with 5 services:
+    1. Full Name
+    2. Contact
+    3. Service (5 buttons)
+    4. Date/Time
+    5. Message
+  - Sends summary to user AND to admin (from ADMIN_ID in .env)
+  - Admin notification warning removed from user view.
+  
+  *** REFACTORED FOR VERCEL WEBHOOK WITH SESSION FIX ***
 */
 
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Telegraf, Markup, session } from 'telegraf'; // <-- IMPORT 'session' here
+import { Telegraf, Markup } from 'telegraf';
+import LocalSession from 'telegraf-session-local'; // <-- NEW IMPORT
 
 // Configure dotenv
 dotenv.config();
@@ -33,10 +45,14 @@ if (!ADMIN_ID) {
 // --- INITIALIZATION ---
 const bot = new Telegraf(BOT_TOKEN);
 
-// Apply Telegraf's standard session middleware: THIS IS THE FIX.
-// It stores session state directly in the Telegram update object,
-// requiring no external storage and solving Vercel's state issue reliably.
-bot.use(session());
+// Configure Local Session: Uses Vercel's temporary directory for session storage
+// This replaces the volatile in-memory 'sessions = new Map()'
+const session = new LocalSession({
+  database: '/tmp/session.json' // Vercel's writable temporary directory
+});
+
+// Apply session middleware
+bot.use(session.middleware());
 
 // Local welcome image path (must exist in the same folder)
 const LOCAL_WELCOME_IMAGE = path.join(__dirname, 'nina.jpg');
@@ -71,7 +87,7 @@ To book an an appointment, press the button below.`;
 
 // Format admin summary (Markdown)
 function formatAdminSummary(session, from) {
-  // Access properties from ctx.session 
+  // Access properties from ctx.session (now persistent)
   const fullName = escapeMarkdownV2(session.fullName || 'N/A');
   const contact = escapeMarkdownV2(session.contact || 'N/A');
   const service = escapeMarkdownV2(session.service || 'N/A');
